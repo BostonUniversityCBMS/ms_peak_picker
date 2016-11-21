@@ -2,6 +2,9 @@
 A Peak Picker/Fitter adapted from Decon2LS's DeconEngine
 '''
 
+import numpy as np
+
+
 from .peak_statistics import (
     find_signal_to_noise, quadratic_fit, lorenztian_fit,
     peak_area, find_left_width, find_right_width)
@@ -28,6 +31,26 @@ fit_type_map = {
 
 
 class PartialPeakFitState(Base):
+    """Stores partial state for the peak currently being picked by a :class:`PeakProcessor`
+    instance.
+
+    Rather than storing this information directly in the :class:`PeakProcessor` object,
+    this separates the state of the current peak from the state of the peak picking process,
+    while providing a simple way to clear the current peak's data.
+
+    Attributes
+    ----------
+    full_width_at_half_max : float
+        The complete full width at half max of the current peak
+    left_width : float
+        The left width at half max of the current peak
+    right_width : float
+        The right width at half max of the current peak
+    set : bool
+        Whether or not the current peak has any stored data
+    signal_to_noise : float
+        The signal to noise ratio of the current peak
+    """
     def __init__(self, left_width=-1, right_width=-1, full_width_at_half_max=-1, signal_to_noise=-1):
         self.set = left_width != -1
         self.left_width = left_width
@@ -36,6 +59,8 @@ class PartialPeakFitState(Base):
         self.signal_to_noise = signal_to_noise
 
     def reset(self):
+        """Resets all the data in the object to initial configuration
+        """
         self.set = False
         self.left_width = -1
         self.right_width = -1
@@ -44,17 +69,21 @@ class PartialPeakFitState(Base):
 
 
 class PeakProcessor(object):
-    _signal_to_noise_threshold = 0
-    _intensity_threshold = 0
 
     def __init__(self, fit_type='quadratic', peak_mode='profile', signal_to_noise_threshold=1, intensity_threshold=1,
                  threshold_data=False, verbose=False):
         assert fit_type in fit_type_map
+
+        self._signal_to_noise_threshold = 0
+        self._intensity_threshold = 0
+
         self.fit_type = fit_type
+
         self.background_intensity = 1
         self.threshold_data = threshold_data
         self.signal_to_noise_threshold = signal_to_noise_threshold
         self.intensity_threshold = intensity_threshold
+
         self.peak_mode = peak_mode
         self.verbose = verbose
 
@@ -127,7 +156,7 @@ class PeakProcessor(object):
             if self.peak_mode == "centroid":
                 mz = mz_array[index]
                 signal_to_noise = current_intensity / intensity_threshold
-                full_width_at_half_max = 0.3
+                full_width_at_half_max = 0.1
                 peak_data.append(FittedPeak(mz, current_intensity, signal_to_noise, len(
                     peak_data), index, full_width_at_half_max, current_intensity))
             else:
@@ -174,6 +203,12 @@ class PeakProcessor(object):
 
                         if full_width_at_half_max > 0:
                             area = self.area(mz_array, intensity_array, fitted_mz, full_width_at_half_max, index)
+                            if full_width_at_half_max > 1.:
+                                # print(
+                                #     "Full Width at Half Max too wide", full_width_at_half_max,
+                                #     fitted_mz,
+                                #     current_intensity)
+                                full_width_at_half_max = 1.
 
                             peak_data.append(FittedPeak(
                                 fitted_mz, current_intensity, signal_to_noise,
@@ -191,14 +226,20 @@ class PeakProcessor(object):
         return len(peak_data)
 
     def find_full_width_at_half_max(self, index, mz_array, intensity_array, signal_to_noise):
-        left = find_left_width(mz_array, intensity_array, index, signal_to_noise)
-        right = find_right_width(mz_array, intensity_array, index, signal_to_noise)
+        try:
+            left = find_left_width(mz_array, intensity_array, index, signal_to_noise)
+        except np.linalg.LinAlgError:
+            left = 1e-7
+        try:
+            right = find_right_width(mz_array, intensity_array, index, signal_to_noise)
+        except np.linalg.LinAlgError:
+            right = 1e-7
 
         if left < 1e-6:
             left = right
         elif right < 1e-6:
             right = left
-        elif right < 1e-6 and left < 1e-6:
+        if right < 1e-6 and left < 1e-6:
             left = right = 0.15
         fwhm = left + right
         self.partial_fit_state.left_width = left
@@ -234,20 +275,24 @@ class PeakProcessor(object):
 
 def pick_peaks(mz_array, intensity_array, fit_type='quadratic', peak_mode='profile',
                signal_to_noise_threshold=1, intensity_threshold=1, threshold_data=False,
-               target_envelopes=None, transforms=None, verbose=False):
+               target_envelopes=None, transforms=None, verbose=False,
+               start_mz=None, stop_mz=None):
     if transforms is None:
         transforms = []
 
     mz_array = mz_array.astype(float)
     intensity_array = intensity_array.astype(float)
 
-    mz_array, intensity_array = transform(mz_array, intensity_array, transforms)
+    if peak_mode != 'centroid':
+        mz_array, intensity_array = transform(mz_array, intensity_array, transforms)
 
     processor = PeakProcessor(
         fit_type, peak_mode, signal_to_noise_threshold, intensity_threshold, threshold_data,
         verbose=verbose)
     if target_envelopes is None:
-        processor.discover_peaks(mz_array, intensity_array)
+        processor.discover_peaks(
+            mz_array, intensity_array,
+            start_mz=start_mz, stop_mz=stop_mz)
     else:
         for start, stop in sorted(target_envelopes):
             processor.discover_peaks(mz_array, intensity_array, start_mz=start, stop_mz=stop)
