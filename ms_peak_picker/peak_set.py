@@ -89,11 +89,16 @@ class PeakSet(Base):
     def __len__(self):
         return len(self.peaks)
 
+    def reindex(self):
+        self._index()
+
     def _index(self):
         self.peaks = sorted(self.peaks, key=operator.attrgetter('mz'))
         i = 0
         for i, peak in enumerate(self.peaks):
             peak.peak_count = i
+            if peak.index == -1:
+                peak.index = i
         return i
 
     def has_peak(self, mz, tolerance=1e-5):
@@ -141,7 +146,7 @@ def _binary_search(array, value, lo, hi, tolerance, verbose=False):
     if (hi - lo) < 5:
         return _sweep_solution(array, value, lo, hi, tolerance, verbose)
     else:
-        mid = (hi + lo) / 2
+        mid = (hi + lo) // 2
         target = array[mid]
         target_value = target.mz
         error = ppm_error(value, target_value)
