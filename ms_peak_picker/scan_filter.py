@@ -3,10 +3,38 @@ import numpy as np
 from .utils import Base
 from .fticr_denoising import denoise as fticr_remove_baseline
 
+try:
+    basestring
+except NameError:
+    from six import string_types as basestring
+
+
+#: Global register of all named scan filters
 filter_register = {}
 
 
 def register(name, *args, **kwargs):
+    """Decorate a class to register a name for
+    it, optionally with a set of associated initialization
+    parameters.
+
+    Parameters
+    ----------
+    name : str
+        The name to register the filter under.
+    *args
+        Positional arguments forwarded to the decorated class's
+        initialization method
+    **kwargs
+        Keyword arguments forwarded to the decorated class's
+        intialization method
+
+    Returns
+    -------
+    function
+        A decorating function which will carry out the registration
+        process on the decorated class
+    """
     def wrap(cls):
         filter_register[name] = cls(*args, **kwargs)
         return cls
@@ -14,7 +42,12 @@ def register(name, *args, **kwargs):
 
 
 class FilterBase(Base):
+    """A base type for Filters over raw signal arrays.
 
+    All subtypes should provide a :meth:`filter` method
+    which takes arguments *mz_array* and *intensity_array*
+    which will be NumPy Arrays.
+    """
     def filter(self, mz_array, intensity_array):
         return mz_array, intensity_array
 
@@ -24,7 +57,8 @@ class FilterBase(Base):
 
 @register("median")
 class MedianIntensityFilter(FilterBase):
-
+    """Filter signal below the median signal
+    """
     def filter(self, mz_array, intensity_array):
         mask = intensity_array < np.median(intensity_array)
         intensity_array = np.array(intensity_array)
@@ -34,7 +68,8 @@ class MedianIntensityFilter(FilterBase):
 
 @register("mean_below_mean")
 class MeanBelowMeanFilter(FilterBase):
-
+    """Filter signal below the mean below the mean
+    """
     def filter(self, mz_array, intensity_array):
         mean = intensity_array.mean()
         mean_below_mean = (intensity_array < mean).mean()
@@ -45,6 +80,18 @@ class MeanBelowMeanFilter(FilterBase):
 
 @register("savitsky_golay")
 class SavitskyGolayFilter(FilterBase):
+    """Apply :ref:`Savitsky-Golay smoothing <https://en.wikipedia.org/wiki/Savitzky%E2%80%93Golay_filter>`
+    to the signal.
+
+    Attributes
+    ----------
+    deriv : int
+        Number of derivatives to take
+    polyorder : int
+        Order of the polynomial to construct
+    window_length : int
+        Number of data points to include around the current point
+    """
     def __init__(self, window_length=5, polyorder=3, deriv=0):
         self.window_length = window_length
         self.polyorder = polyorder
@@ -74,6 +121,25 @@ class NPercentOfMaxFilter(FilterBase):
 
 @register("fticr_baseline")
 class FTICRBaselineRemoval(FilterBase):
+    """Apply FTICR baseline removal.
+
+    This calls :py:func:`~ms_peak_picker.fticr_denoising.denoise`
+
+    Attributes
+    ----------
+    region_width : float
+        The width of the region to group windows
+        by.
+    scale : float
+        The multiplier of the noise level to remove.
+    window_length : float
+        The size of the window to tile across each
+        region
+
+    See Also
+    --------
+    ms_peak_picker.fticr_denoising.denoise
+    """
     def __init__(self, window_length=1., region_width=10, scale=5):
         self.window_length = window_length
         self.region_width = region_width
@@ -119,6 +185,33 @@ class MaximumScaler(FilterBase):
 
 
 def transform(mz_array, intensity_array, filters=None):
+    """Apply a series of *filters* to the paired m/z and intensity
+    arrays.
+
+    The `filters` argument should be an iterable of either strings,
+    callables, or instances of :class:`FilterBase`-derived classes.
+    If they are strings, they must be registered names, as created by
+    :func:`register`.
+
+    Parameters
+    ----------
+    mz_array : np.ndarray[float64]
+        The m/z array to filter
+    intensity_array : np.ndarray[float64]
+        The intensity array to filter
+    filters : Iterable
+        An Iterable of either strings, callables, or instances
+        of :class:`FilterBase`-derived classes. If they are
+        strings, they must be registered names, as created by
+        :func:`register`
+
+    Returns
+    -------
+    np.ndarray[float64]:
+        The m/z array after filtering
+    np.ndarray[float64]:
+        The intensity array after filtering
+    """
     if filters is None:
         filters = []
 
